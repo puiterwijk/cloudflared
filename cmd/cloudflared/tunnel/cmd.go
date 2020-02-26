@@ -939,6 +939,13 @@ func tunnelFlags(shouldHide bool) []cli.Flag {
 			EnvVars: []string{"TUNNEL_DNS_UPSTREAM"},
 			Hidden:  shouldHide,
 		}),
+		altsrc.NewStringSliceFlag(&cli.StringSliceFlag{
+			Name:    "proxy-dns-dns53-whitelist",
+			Usage:   "List of records to resolve via DNS53.",
+			Value:   cli.NewStringSlice(),
+			EnvVars: []string{"TUNNEL_DNS_DNS53_WHITELIST"},
+			Hidden:  shouldHide,
+		}),
 		altsrc.NewDurationFlag(&cli.DurationFlag{
 			Name:    "grace-period",
 			Usage:   "Duration to accept new requests after cloudflared receives first SIGINT/SIGTERM. A second SIGINT/SIGTERM will force cloudflared to shutdown immediately.",

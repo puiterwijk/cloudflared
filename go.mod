@@ -10,7 +10,7 @@ require (
 	github.com/certifi/gocertifi v0.0.0-20180118203423-deb3ae2ef261 // indirect
 	github.com/cloudflare/brotli-go v0.0.0-20191101163834-d34379f7ff93
 	github.com/cloudflare/golibs v0.0.0-20170913112048-333127dbecfc
-	github.com/coredns/coredns v1.2.0
+	github.com/coredns/coredns v1.2.6
 	github.com/coreos/go-oidc v0.0.0-20171002155002-a93f71fdfe73
 	github.com/coreos/go-systemd v0.0.0-20190620071333-e64a0ec8b42a
 	github.com/denisenkom/go-mssqldb v0.0.0-20191001013358-cfbb681360f0
@@ -24,8 +24,9 @@ require (
 	github.com/getsentry/raven-go v0.0.0-20180517221441-ed7bcb39ff10
 	github.com/gliderlabs/ssh v0.0.0-20191009160644-63518b5243e0
 	github.com/go-sql-driver/mysql v1.4.1
+	github.com/godbus/dbus/v5 v5.0.3
 	github.com/golang-collections/collections v0.0.0-20130729185459-604e922904d3
-	github.com/google/certificate-transparency-go v1.1.0
+	github.com/google/certificate-transparency-go v1.1.0 // indirect
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.3
 	github.com/gorilla/websocket v1.4.0

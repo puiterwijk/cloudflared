@@ -35,7 +35,7 @@ func Run(c *cli.Context) error {
 
 	go metrics.ServeMetrics(metricsListener, nil, logger)
 
-	listener, err := CreateListener(c.String("address"), uint16(c.Uint("port")), c.StringSlice("upstream"))
+	listener, err := CreateListener(c.String("address"), uint16(c.Uint("port")), c.StringSlice("upstream"), c.StringSlice("dns53-whitelist"))
 	if err != nil {
 		logger.WithError(err).Errorf("Failed to create the listeners")
 		return err
@@ -117,7 +117,7 @@ func (l *Listener) Stop() error {
 }
 
 // CreateListener configures the server and bound sockets
-func CreateListener(address string, port uint16, upstreams []string) (*Listener, error) {
+func CreateListener(address string, port uint16, upstreams, dns53_whitelist []string) (*Listener, error) {
 	// Build the list of upstreams
 	upstreamList := make([]Upstream, 0)
 	for _, url := range upstreams {
@@ -135,11 +135,14 @@ func CreateListener(address string, port uint16, upstreams []string) (*Listener,
 		Upstreams: upstreamList,
 	}
 
+	// Create a DNS53 forwarder
+	dns53 := NewDNS53lugin(chain, dns53_whitelist)
+
 	// Format an endpoint
 	endpoint := "dns://" + net.JoinHostPort(address, strconv.FormatUint(uint64(port), 10))
 
 	// Create the actual middleware server
-	server, err := dnsserver.NewServer(endpoint, []*dnsserver.Config{createConfig(address, port, NewMetricsPlugin(chain))})
+	server, err := dnsserver.NewServer(endpoint, []*dnsserver.Config{createConfig(address, port, NewMetricsPlugin(dns53))})
 	if err != nil {
 		return nil, err
 	}

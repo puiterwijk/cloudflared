@@ -71,7 +71,7 @@ func logClientOptions(c *cli.Context) {
 		flags[flag] = c.Generic(flag)
 	}
 
-	sliceFlags := []string{"header", "tag", "proxy-dns-upstream", "upstream", "edge"}
+	sliceFlags := []string{"header", "tag", "proxy-dns-upstream", "proxy-dns-dns53-whitelist", "upstream", "edge"}
 	for _, sliceFlag := range sliceFlags {
 		if len(c.StringSlice(sliceFlag)) > 0 {
 			flags[sliceFlag] = strings.Join(c.StringSlice(sliceFlag), ", ")
