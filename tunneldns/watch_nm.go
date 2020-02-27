@@ -43,6 +43,20 @@ func getDHCPNameServersFromActiveConnection(aconn dbus.ObjectPath) ([]string, er
 	return strings.Split(dns, " "), nil
 }
 
+func getNMConnectivityCheckURL() (string, error) {
+	conn, err := dbus.SystemBus()
+	if err != nil {
+		return "", fmt.Errorf("Error connecting to sysbus: %s", err)
+	}
+
+	nmobj := conn.Object(nmDest, nmPath)
+	urivar, err := nmobj.GetProperty(nmDest + ".ConnectivityCheckUri")
+	if err != nil {
+		return "", fmt.Errorf("Error getting connectivity check URL: %s", err)
+	}
+	return urivar.Value().(string), nil
+}
+
 func getDHCPNameServers() ([]string, error) {
 	conn, err := dbus.SystemBus()
 	if err != nil {

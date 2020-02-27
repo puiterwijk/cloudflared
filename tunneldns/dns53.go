@@ -41,6 +41,14 @@ func NewDNS53lugin(chain plugin.Handler, whitelist []string) *DNS53Plugin {
 	if len(whitelist) == 1 && strings.HasPrefix(whitelist[0], "auto:") {
 		p.AutoWhitelistURL = whitelist[0][len("auto:"):]
 
+		if p.AutoWhitelistURL == "" {
+			concheckuri, err := getNMConnectivityCheckURL()
+			if err != nil {
+				logger.WithError(err).Fatal("Error retrieving connectivity check URL")
+			}
+			p.AutoWhitelistURL = concheckuri
+		}
+
 		logger.WithField("auto-whitelist-url", p.AutoWhitelistURL).Info("Configuring DNS53 fallback with auto whitelist")
 	} else {
 		for _, entry := range whitelist {
@@ -171,6 +179,12 @@ func (p *DNS53Plugin) determineAutoWhitelist(tmpfwd *forward.Forward) {
 		return
 	}
 
+	if len(newWhitelist) == 1 {
+		logger.Info("Did not detect a captive portal, marking global connection")
+		p.updateState(NM_STATE_CONNECTED_GLOBAL)
+		return
+	}
+
 	p.L.Lock()
 	p.Whitelist = newWhitelist
 	p.L.Unlock()
@@ -242,7 +256,12 @@ func (p DNS53Plugin) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.
 	p.L.RLock()
 	defer p.L.RUnlock()
 
-	logger.WithField("question", r.Question).Info("Whitelisted request, using DNS53")
+	remark := ""
+	if len(results) != 0 {
+		remark = " (cached)"
+	}
+
+	logger.WithField("question", r.Question).Infof("Whitelisted request, using%s DNS53", remark)
 	if p.Forwarder == nil {
 		logger.Info("No DNS53 forwarders configured, attempting DoH for whitelisted query")
 		return p.Next.ServeDNS(ctx, w, r)
