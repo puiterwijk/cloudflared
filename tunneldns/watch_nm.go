@@ -67,7 +67,20 @@ func getDHCPNameServers() ([]string, error) {
 	return dns, nil
 }
 
-func watchDHCPNameserverChanges() <-chan []string {
+type nmstate uint32
+
+const (
+	NM_STATE_UNKNOWN          nmstate = 0
+	NM_STATE_ASLEEP           nmstate = 10
+	NM_STATE_DISCONNECTED     nmstate = 20
+	NM_STATE_DISCONNECTING    nmstate = 30
+	NM_STATE_CONNECTING       nmstate = 40
+	NM_STATE_CONNECTED_LOCAL  nmstate = 50
+	NM_STATE_CONNECTED_SITE   nmstate = 60
+	NM_STATE_CONNECTED_GLOBAL nmstate = 70
+)
+
+func watchDHCPNameserverChanges() (<-chan []string, chan nmstate) {
 	conn, err := dbus.SystemBus()
 	if err != nil {
 		panic(err)
@@ -84,7 +97,33 @@ func watchDHCPNameserverChanges() <-chan []string {
 
 	sigch := make(chan *dbus.Signal, 10)
 
-	changech := make(chan []string, 5)
+	nschangech := make(chan []string, 5)
+	cpchangech := make(chan nmstate)
+
+	handlePCChange := func(primconvar dbus.Variant) {
+		primconaddr := primconvar.Value().(dbus.ObjectPath)
+
+		if primconaddr == "/" {
+			// Got disconnected, no more nameservers valid
+			logger.Info("Lost primaryconnection, clearing DNS53 forwarders")
+			nschangech <- []string{}
+			return
+		}
+
+		newns, err := getDHCPNameServersFromActiveConnection(primconaddr)
+		if err != nil {
+			logger.WithError(err).Error("Error getting DNS53 forwarders")
+			nschangech <- []string{}
+			return
+		}
+		logger.WithField("nameservers", newns).Info("Received new DNS53 forwarders")
+		nschangech <- newns
+	}
+
+	handleStateChange := func(statevar dbus.Variant) {
+		newstate := statevar.Value().(uint32)
+		cpchangech <- nmstate(newstate)
+	}
 
 	go func() {
 		conn.Signal(sigch)
@@ -92,28 +131,15 @@ func watchDHCPNameserverChanges() <-chan []string {
 		for v := range sigch {
 			newprops := v.Body[1].(map[string]dbus.Variant)
 			primconvar, pcchanged := newprops["PrimaryConnection"]
-			if !pcchanged {
-				continue
+			if pcchanged {
+				handlePCChange(primconvar)
 			}
-			primconaddr := primconvar.Value().(dbus.ObjectPath)
-
-			if primconaddr == "/" {
-				// Got disconnected, no more nameservers valid
-				logger.Info("Lost primaryconnection, clearing DNS53 forwarders")
-				changech <- []string{}
-				continue
+			statevar, statechanged := newprops["State"]
+			if statechanged {
+				handleStateChange(statevar)
 			}
-
-			newns, err := getDHCPNameServersFromActiveConnection(primconaddr)
-			if err != nil {
-				logger.WithError(err).Error("Error getting DNS53 forwarders")
-				changech <- []string{}
-				continue
-			}
-			logger.WithField("nameservers", newns).Info("Received new DNS53 forwarders")
-			changech <- newns
 		}
 	}()
 
-	return changech
+	return nschangech, cpchangech
 }
