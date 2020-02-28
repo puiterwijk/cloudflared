@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ type DNS53Plugin struct {
 
 	L                sync.RWMutex
 	AutoWhitelistURL string
+	HTTPWhitelist    []string
 	Whitelist        whitelistType
 
 	Next plugin.Handler
@@ -34,36 +36,56 @@ func NewDNS53lugin(chain plugin.Handler, whitelist []string) *DNS53Plugin {
 	fwSetupChains()
 
 	p := &DNS53Plugin{
-		Next:      chain,
-		Whitelist: make(whitelistType),
+		Next:          chain,
+		HTTPWhitelist: []string{},
+		Whitelist:     make(whitelistType),
 	}
 
-	if len(whitelist) == 1 && strings.HasPrefix(whitelist[0], "auto:") {
-		p.AutoWhitelistURL = whitelist[0][len("auto:"):]
+	for _, entry := range whitelist {
+		if strings.HasPrefix(entry, "auto:") {
+			if p.AutoWhitelistURL != "" {
+				logger.WithField("whitelist-entry", entry).Fatal("Found multiple auto: entries")
+			}
 
-		if p.AutoWhitelistURL == "" {
-			concheckuri, err := getNMConnectivityCheckURL()
+			p.AutoWhitelistURL = entry[len("auto:"):]
+			if p.AutoWhitelistURL == "" {
+				concheckuri, err := getNMConnectivityCheckURL()
+				if err != nil {
+					logger.WithError(err).Fatal("Error retrieving connectivity check URL")
+				}
+				p.AutoWhitelistURL = concheckuri
+			}
+
+			url, err := url.Parse(p.AutoWhitelistURL)
 			if err != nil {
-				logger.WithError(err).Fatal("Error retrieving connectivity check URL")
+				logger.WithField("url", p.AutoWhitelistURL).WithError(err).Fatal("Error parsing auto whitelist URL")
 			}
-			p.AutoWhitelistURL = concheckuri
+			p.HTTPWhitelist = append(p.HTTPWhitelist, url.Hostname())
+
+			logger.WithField("auto-whitelist-url", p.AutoWhitelistURL).Info("Configuring DNS53 fallback with auto whitelist")
+			continue
 		}
 
-		logger.WithField("auto-whitelist-url", p.AutoWhitelistURL).Info("Configuring DNS53 fallback with auto whitelist")
-	} else {
-		for _, entry := range whitelist {
-			if strings.HasPrefix(entry, "auto:") {
-				logger.WithField("whitelist-entry", entry).Fatal("Determined auto: with multiple entries")
+		if strings.HasPrefix(entry, "http:") {
+			entry = entry[len("http:"):]
+
+			url, err := url.Parse(entry)
+			if err != nil {
+				logger.WithField("url", entry).WithError(err).Fatal("Error parsing whitelisted HTTP URL")
 			}
-			if !strings.HasSuffix(entry, ".") {
-				entry = entry + "."
-			}
-			// An empty list means we will resolve on request
-			p.Whitelist[entry] = []*dns.A{}
+			p.HTTPWhitelist = append(p.HTTPWhitelist, url.Hostname())
+
+			continue
 		}
 
-		logger.WithField("whitelist", whitelist).Info("Configuring whitelisted DNS53 fallback")
+		if !strings.HasSuffix(entry, ".") {
+			entry = entry + "."
+		}
+		// An empty list means we will resolve on request
+		p.Whitelist[entry] = []*dns.A{}
 	}
+
+	logger.WithField("whitelist", whitelist).WithField("HTTPWhitelist", p.HTTPWhitelist).Info("Configuring whitelisted DNS53 fallback")
 
 	// First, register for new updates
 	go func() {
@@ -76,7 +98,6 @@ func NewDNS53lugin(chain plugin.Handler, whitelist []string) *DNS53Plugin {
 				p.updateState(newcp)
 			}
 		}
-		panic("For some reason, NM watching ended")
 	}()
 
 	// Then, make sure we catch up on the existing values
@@ -144,9 +165,15 @@ func (p *DNS53Plugin) determineAutoWhitelist(tmpfwd *forward.Forward) {
 
 			As := []*dns.A{}
 			for _, ans := range resp.Answer {
-				A := ans.(*dns.A)
+				A, ok := ans.(*dns.A)
+				if !ok {
+					continue
+				}
 				fwAllowOutbound(A.A.String(), "tcp", "80")
 				As = append(As, A)
+			}
+			if len(As) == 0 {
+				logger.WithField("answer", resp.Answer).Error("Error getting outbound As")
 			}
 			newWhitelist[hostname+"."] = As
 
@@ -191,16 +218,37 @@ func (p *DNS53Plugin) determineAutoWhitelist(tmpfwd *forward.Forward) {
 	logger.WithField("whitelist", newWhitelist).Info("New DNS53 whitelist applied")
 }
 
+func (p *DNS53Plugin) allowHTTPWhitelist() {
+	// Allow outbound URL on port 80 to HTTP whitelisted hosts
+	for _, hostname := range p.HTTPWhitelist {
+		ips, err := net.LookupIP(hostname)
+		if err != nil {
+			logger.WithError(err).Error("Error determining IPs for whitelist URL")
+			return
+		}
+		for _, ip := range ips {
+			if strings.Contains(ip.String(), ":") {
+				// No IPv6
+				continue
+			}
+			fwAllowOutbound(ip.String(), "tcp", "80")
+		}
+	}
+}
+
 func (p *DNS53Plugin) updateState(state nmstate) {
 	p.L.Lock()
 	defer p.L.Unlock()
 
 	logger.WithField("state", state).Info("NetworkManager state changed")
-	if state == NM_STATE_CONNECTED_GLOBAL {
-		logger.Info("Global state detected, clearing whitelist and iptables allows")
-		p.Whitelist = make(whitelistType)
-		fwClearOutbounds()
+	if state != NM_STATE_CONNECTED_GLOBAL {
+		return
 	}
+
+	logger.Info("Global state detected, clearing whitelist and iptables allows")
+	p.Whitelist = make(whitelistType)
+	fwClearOutbounds()
+	p.allowHTTPWhitelist()
 }
 
 func (p *DNS53Plugin) updateNameservers(nameservers []string) {
